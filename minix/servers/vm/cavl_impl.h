@@ -1018,7 +1018,6 @@ L__SC void L__(start_iter)(
 	  }
 	else if (target_cmp != 0)
 	  if (!((cmp ^ target_cmp) & L__MASK_HIGH_BIT))
-	    /* cmp and target_cmp are both negative or both positive. */
 	    iter->depth = d;
 	h = cmp < 0 ? AVL_GET_LESS(h, 1) : AVL_GET_GREATER(h, 1);
 	L__CHECK_READ_ERROR_INV_DEPTH

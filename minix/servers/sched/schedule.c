@@ -15,6 +15,12 @@
 
 static unsigned balance_timeout;
 
+// Our Constants
+#define MAX_NOQUANTUM_COUNT 5
+#define MAX_TIME_SLICE 200
+#define MIN_TIME_SLICE 50
+#define TIME_SLICE_CHANGE 50
+
 #define BALANCE_TIMEOUT	5 /* how often to balance queues in seconds */
 
 static int schedule_process(struct schedproc * rmp, unsigned flags);
@@ -96,13 +102,28 @@ int do_noquantum(message *m_ptr)
 	}
 
 	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
-	}
 
-	if ((rv = schedule_process_local(rmp)) != OK) {
-		return rv;
-	}
+    rmp->nqcounter ++; // increment the counter
+
+    // if the counter has reached the limit then
+    // reset the counter and lower its priority
+    // and quantum size and reschedule it
+    if (rmp->nqcounter >= MAX_NOQUANTUM_COUNT) {
+        int reschedule = 0;
+        rmp->nqcounter = 0;
+        if (rmp->priority < MIN_USER_Q) {
+            rmp->priority += 1; /* lower priority */
+            reschedule = 1;
+        }
+        if (rmp->time_slice > MIN_TIME_SLICE) {
+            rmp->time_slice -= TIME_SLICE_CHANGE;
+            reschedule = 1;
+        }
+        
+        if (reschedule && (rv = schedule_process_local(rmp)) != OK) {
+            return rv;
+        }
+    }
 	return OK;
 }
 
@@ -158,6 +179,7 @@ int do_start_scheduling(message *m_ptr)
 	rmp = &schedproc[proc_nr_n];
 
 	/* Populate process slot */
+    rmp->nqcounter    = 0;
 	rmp->endpoint     = m_ptr->m_lsys_sched_scheduling_start.endpoint;
 	rmp->parent       = m_ptr->m_lsys_sched_scheduling_start.parent;
 	rmp->max_priority = m_ptr->m_lsys_sched_scheduling_start.maxprio;
@@ -298,6 +320,7 @@ static int schedule_process(struct schedproc * rmp, unsigned flags)
 {
 	int err;
 	int new_prio, new_quantum, new_cpu, niced;
+    rmp->nqcounter = 0;
 
 	pick_cpu(rmp);
 
@@ -357,10 +380,26 @@ void balance_queues(void)
 
 	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
 		if (rmp->flags & IN_USE) {
-			if (rmp->priority > rmp->max_priority) {
-				rmp->priority -= 1; /* increase priority */
-				schedule_process_local(rmp);
-			}
+            // if the counter is 0 then increase
+            // its priority and quantum size if 
+            // possible and quantum size and reschedule it
+            // otherwise decrement the counter
+            if (rmp->nqcounter == 0) {
+                int reschedule = 0;
+                if (rmp->priority > rmp->max_priority) {
+                    rmp->priority -= 1;
+                    reschedule = 1;
+                }
+                if (rmp->time_slice < MAX_TIME_SLICE) {
+                    rmp->time_slice += TIME_SLICE_CHANGE;
+                    reschedule = 1;
+                }
+                if (reschedule) {
+                    schedule_process_local(rmp);
+                }
+            } else {
+                rmp->nqcounter --;
+            }
 		}
 	}
 
